@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PPTX Exporter — Templates</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+  <style>
+    /* ---------------------------
+       Local overrides + dark-first theme
+       (these complement your external stylesheet)
+       --------------------------- */
+
+    :root {
+      --accent: #0b63ff;
+      --accent-2: #7c9cff;
+      --muted: #9aa6c3;
+      --radius: 12px;
+      --pad: 16px;
+      --transition: 180ms cubic-bezier(.2,.9,.3,1);
+    }
+
+    /* Default to dark UI — page appears dark by itself unless user chooses otherwise */
+    html,body {
+      height:100%;
+      margin:0;
+      font-family: "Inter", "Segoe UI", Roboto, Arial, sans-serif;
+      background: linear-gradient(180deg,#0b1220,#07101a); /* dark page bg */
+      color: #e6eefc;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+
+    /* container + card */
+    .container { max-width:1220px; margin:28px auto; padding:20px; }
+    .app-card {
+      background: linear-gradient(180deg,#0f1724,#0b1220);
+      border-radius: calc(var(--radius) + 4px);
+      padding: var(--pad);
+      box-shadow: 0 10px 30px rgba(2,6,23,0.65);
+      display: grid;
+      gap: 18px;
+      border: 1px solid rgba(255,255,255,0.03);
+    }
+
+    /* header layout: brand + controls on one row (keep thumbs below) */
+    .header-row {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .brand h1 { margin:0; font-size:20px; color:#ffffff; }
+    .brand p { margin:4px 0 0; font-size:13px; color:var(--muted); }
+
+    /* thumbs under the header-row */
+    .template-thumbs {
+      display:flex;
+      gap:14px;
+      flex-wrap:wrap;
+      margin-top:12px;
+    }
+    .thumb {
+      width:108px;
+      text-align:center;
+      cursor:pointer;
+      border-radius:10px;
+      padding:8px;
+      transition: transform var(--transition), box-shadow var(--transition);
+      background: linear-gradient(180deg,#0b1220,#0f1724);
+      border:1px solid rgba(255,255,255,0.03);
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      align-items:center;
+      justify-content:center;
+      box-shadow: 0 6px 18px rgba(2,6,23,0.6);
+    }
+    .thumb img {
+      width:88px;height:56px;object-fit:cover;border-radius:6px;display:block;border:1px solid rgba(255,255,255,0.03);
+    }
+    .thumb-label { font-size:13px; color:#e6eefc; font-weight:700; }
+    .thumb.selected { transform: translateY(-4px); box-shadow: 0 18px 44px rgba(3,8,30,0.6); border-color: rgba(11,99,255,0.28); }
+
+    /* two-column layout */
+    .columns { display:grid; grid-template-columns: 1fr 420px; gap:18px; align-items:start; }
+    @media (max-width:1100px){ .columns{ grid-template-columns:1fr; } }
+
+    /* left editor area */
+    .left { display:flex; flex-direction:column; gap:12px; }
+
+    .field { display:flex; flex-direction:column; gap:8px; }
+    .field-label { display:flex; justify-content:space-between; gap:8px; align-items:center; color:#e6eefc; font-weight:700; }
+    .field-label .hint { color:var(--muted); font-weight:600; font-size:12px; }
+
+    /* textareas (dark) */
+    .large-textarea {
+      width:100%;
+      min-height:160px;
+      padding:14px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,0.04);
+      background: linear-gradient(180deg,#0d1320,#0b1220);
+      color:#e6eefc;
+      resize:vertical;
+      font-size:15px;
+      line-height:1.5;
+      box-shadow: 0 6px 18px rgba(2,6,23,0.55);
+    }
+    .large-textarea::placeholder { color: rgba(230,238,252,0.45); font-weight:600; }
+    .large-textarea:focus { outline:none; box-shadow:0 16px 48px rgba(11,99,255,0.10); border-color: rgba(11,99,255,0.18); transform: translateY(-2px); }
+
+    /* actions (filename + submit + instructions) */
+    .actions { display:flex; gap:12px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+    /* compact filename input (single-line) */
+    #pptx-name {
+      display:block; width:320px; max-width:100%;
+      padding:10px 14px; border-radius:10px; border:1px solid rgba(255,255,255,0.06);
+      background: linear-gradient(180deg,#0d1320,#0b1220); color:#e6eefc; font-weight:600;
+      box-shadow: 0 6px 18px rgba(2,6,23,0.5); transition: box-shadow var(--transition), transform var(--transition);
+    }
+    #pptx-name::placeholder { color: rgba(230,238,252,0.45); }
+    #pptx-name:focus { box-shadow:0 16px 48px rgba(11,99,255,0.12); transform: translateY(-2px); border-color: rgba(11,99,255,0.18); outline:none; }
+
+    /* button styles */
+    .btn {
+      display:inline-flex; align-items:center; gap:8px; padding:10px 16px; border-radius:10px; border:0;
+      font-weight:800; color:white; cursor:pointer;
+      background: linear-gradient(180deg,var(--accent), var(--accent-2));
+      box-shadow: 0 10px 26px rgba(11,99,255,0.18);
+      transition: transform var(--transition), box-shadow var(--transition);
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 18px 44px rgba(11,99,255,0.22); }
+    .btn.secondary {
+      background: transparent; color: #cfe3ff; border: 1px solid rgba(255,255,255,0.06); font-weight:700;
+      box-shadow:none;
+    }
+
+    /* preview area (right column) */
+    .preview-area {
+      background: linear-gradient(180deg,#0b1220,#07101a);
+      border-radius:12px; padding:14px; border:1px solid rgba(255,255,255,0.03);
+      box-shadow: 0 8px 22px rgba(2,6,23,0.6);
+      min-height:240px; color:#e6eefc;
+    }
+    .preview-area h3 { margin:0 0 8px 0; font-size:15px; color:#f8fbff; }
+
+    /* slide list: vertical stack, each a card with number + labels */
+    .slides-list { display:flex; flex-direction:column; gap:10px; margin-top:8px; max-height:60vh; overflow:auto; padding-right:6px; }
+    .slide-card {
+      background: linear-gradient(180deg,#0d1320,#0b1220);
+      border-radius:10px; padding:10px; border:1px solid rgba(255,255,255,0.03);
+      box-shadow: 0 6px 18px rgba(2,6,23,0.55);
+      display:flex; flex-direction:column; gap:8px;
+    }
+    .slide-index { font-weight:900; color:#a8c8ff; font-size:13px; }
+    .slide-row { display:flex; flex-direction:column; gap:6px; }
+    .slide-row label { font-size:12px; color:var(--muted); font-weight:700; }
+    .slide-input {
+      padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.04);
+      background: linear-gradient(180deg,#0b1220,#08101a); color:#e6eefc; font-weight:600;
+    }
+
+    /* responsive smaller screens: compact layout */
+    @media (max-width:900px){
+      .columns{ grid-template-columns: 1fr; }
+      .preview-area { order:3; }
+      #pptx-name { width:100%; }
+      .actions { flex-direction:column; align-items:stretch; }
+    }
+
+    /* accessibility focus */
+    .thumb:focus, .btn:focus, input:focus, textarea:focus { outline: none; box-shadow: 0 8px 30px rgba(11,99,255,0.12); }
+
+    /* ensure links are visible */
+    a { color: #9fc0ff; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+
+  </style>
+</head>
+<body>
+  <!-- white edge bars (subtle design) -->
+  <div class="edge top" aria-hidden="true"></div>
+  <div class="edge bottom" aria-hidden="true"></div>
+
+  <div class="container">
+    <div class="app-card">
+      <!-- header row (title + controls) -->
+      <div class="header-row">
+        <div class="brand" aria-hidden="false">
+          <h1>PPTX Exporter</h1>
+          <p>Click a template thumbnail, edit lines, then export.</p>
+        </div>
+
+        <!-- right-side controls: dark switch + instructions button -->
+        <div style="display:flex;gap:10px;align-items:center;">
+         
+
+          <!-- Instructions button -> /tutorial (server should serve this route or file) -->
+          <a href="/tutorial" class="btn secondary" role="button" aria-label="Open instructions">Instructions</a>
+        </div>
+      </div>
+
+      <!-- Template thumbs under header -->
+      <div class="template-thumbs" id="thumbs" role="list" aria-label="Templates">
+        <div role="listitem" class="thumb" tabindex="0" data-template="Marsiya.pptx" aria-label="Marsiya template">
+          <img src="{{ url_for('static', filename='images/marsyia.png') }}" alt="Marsiya">
+          <div class="thumb-label">Marsiya</div>
+        </div>
+
+        <div role="listitem" class="thumb" tabindex="0" data-template="Qasida.pptx" aria-label="Qasida template">
+          <img src="{{ url_for('static', filename='images/qasida.png') }}" alt="Qasida">
+          <div class="thumb-label">Qasida</div>
+        </div>
+      </div>
+
+      <!-- form + editor + preview -->
+      <form id="exportForm" action="/generate" method="post" novalidate>
+        <input type="hidden" name="template" id="template_input">
+
+        <div class="columns">
+          <div class="left">
+            <div class="field">
+              <div class="field-label">
+                <span>Top (English) — one phrase per line</span>
+                <span class="hint">Centered on slide</span>
+              </div>
+              <textarea id="top_text" name="top_text" class="large-textarea"
+                        placeholder="Line 1 Top (English)\nLine 2 Top (English)"></textarea>
+            </div>
+
+            <div class="field">
+              <div class="field-label">
+                <span>Bottom (Other language) — one phrase per line</span>
+                <span class="hint">Left-aligned on slide</span>
+              </div>
+              <textarea id="bottom_text" name="bottom_text" class="large-textarea"
+                        placeholder="Line 1 Bottom (Other language)\nLine 2 Bottom (Other language)"></textarea>
+            </div>
+
+            <div class="actions">
+              <input type="text" id="pptx-name" name="pptx_name" placeholder="Enter PPTX file name (optional)">
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button type="submit" class="btn" title="Generate PPTX">Generate PPTX</button>
+                <button type="button" id="clearBtn" class="btn secondary" title="Clear editor">Clear</button>
+              </div>
+            </div>
+          </div>
+
+          <aside class="preview-area" id="previewArea" aria-live="polite">
+            <h3>Slides — edit Top & Bottom</h3>
+
+            <!-- vertical slides list -->
+            <div id="slidesContainer" class="slides-list" aria-atomic="true"></div>
+          </aside>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // ---------- Dark mode: default ON, persistent ----------
+    const checkbox = document.getElementById('darkToggleCheckbox');
+    const label = document.getElementById('darkToggleLabel');
+
+    // Default: dark by itself. If user previously chose a preference, respect that.
+    const saved = localStorage.getItem('pptx_dark_mode'); // "1" or "0" or null
+    const defaultOn = (saved === null) ? true : (saved === '1'); // if no saved, default to on
+    function applyDark(on) {
+      document.body.classList.toggle('dark', on);
+      // ensure inputs reflect dark visuals by toggling attributes (not strictly necessary - CSS handles color)
+      if (checkbox) {
+        checkbox.checked = !!on;
+        checkbox.setAttribute('aria-checked', on ? 'true' : 'false');
+      }
+      // persist user choice
+      localStorage.setItem('pptx_dark_mode', on ? '1' : '0');
+    }
+    // initial apply
+    applyDark(defaultOn);
+
+    // wire the control
+    if (checkbox) {
+      checkbox.addEventListener('change', (e) => applyDark(e.target.checked));
+    }
+    if (label) {
+      label.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); applyDark(!checkbox.checked); } });
+      label.addEventListener('click', (e) => { /* label click toggles via checkbox automatically in many browsers; ensure it toggles */ applyDark(!checkbox.checked); });
+    }
+
+    // ---------- Utility: split/join preserving blanks ----------
+    function splitKeepEmpty(text){ return (text === null || text === undefined || text === "") ? [""] : text.split(/\r?\n/); }
+    function joinLines(lines){ return lines.join("\n"); }
+
+    // ---------- Build preview rows: vertical list, each card shows index + TOP/BOTTOM labels & inputs ----------
+    function buildPreviewRows(){
+      const topTA = document.getElementById("top_text");
+      const bottomTA = document.getElementById("bottom_text");
+      const topLines = splitKeepEmpty(topTA.value);
+      const bottomLines = splitKeepEmpty(bottomTA.value);
+      const maxLen = Math.max(topLines.length, bottomLines.length);
+
+      // normalize arrays
+      while (topLines.length < maxLen) topLines.push("");
+      while (bottomLines.length < maxLen) bottomLines.push("");
+
+      const container = document.getElementById("slidesContainer");
+      container.innerHTML = "";
+
+      for (let i = 0; i < maxLen; i++) {
+        const card = document.createElement("div");
+        card.className = "slide-card";
+
+        const idx = document.createElement("div");
+        idx.className = "slide-index";
+        idx.textContent = (i + 1);
+
+        // TOP block
+        const topBlock = document.createElement("div");
+        topBlock.className = "slide-row";
+        const topLabel = document.createElement("label");
+        topLabel.textContent = "TOP:";
+        topLabel.setAttribute("for", `top_input_${i}`);
+        const topInput = document.createElement("input");
+        topInput.type = "text";
+        topInput.id = `top_input_${i}`;
+        topInput.className = "slide-input";
+        topInput.value = topLines[i] || "";
+        topInput.addEventListener("input", (e) => {
+          topLines[i] = e.target.value;
+          topTA.value = joinLines(topLines);
+        });
+        topBlock.appendChild(topLabel);
+        topBlock.appendChild(topInput);
+
+        // BOTTOM block
+        const bottomBlockDiv = document.createElement("div");
+        bottomBlockDiv.className = "slide-row";
+        const bottomLabel = document.createElement("label");
+        bottomLabel.textContent = "BOTTOM:";
+        bottomLabel.setAttribute("for", `bottom_input_${i}`);
+        const bottomInput = document.createElement("input");
+        bottomInput.type = "text";
+        bottomInput.id = `bottom_input_${i}`;
+        bottomInput.className = "slide-input";
+        bottomInput.value = bottomLines[i] || "";
+        bottomInput.addEventListener("input", (e) => {
+          bottomLines[i] = e.target.value;
+          bottomTA.value = joinLines(bottomLines);
+        });
+        bottomBlockDiv.appendChild(bottomLabel);
+        bottomBlockDiv.appendChild(bottomInput);
+
+        // compose card
+        card.appendChild(idx);
+        card.appendChild(topBlock);
+        card.appendChild(bottomBlockDiv);
+        container.appendChild(card);
+      }
+    }
+
+    // wire main textareas to rebuild preview
+    document.getElementById("top_text").addEventListener("input", buildPreviewRows);
+    document.getElementById("bottom_text").addEventListener("input", buildPreviewRows);
+
+    // initial render
+    buildPreviewRows();
+
+    // ---------- Template thumbnail selection (keyboard accessible) ----------
+    document.querySelectorAll(".thumb").forEach(thumb => {
+      thumb.addEventListener("click", () => {
+        document.querySelectorAll(".thumb").forEach(t => t.classList.remove("selected"));
+        thumb.classList.add("selected");
+        document.getElementById("template_input").value = thumb.dataset.template || "";
+      });
+      thumb.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          thumb.click();
+        }
+      });
+    });
+
+    // ---------- form submit sync (make sure preview edits are applied) ----------
+    document.getElementById("exportForm").addEventListener("submit", (e) => {
+      const rows = document.querySelectorAll(".slide-card");
+      const topLines = [], bottomLines = [];
+      rows.forEach(r => {
+        const inputs = r.querySelectorAll("input[type='text']");
+        topLines.push(inputs[0] ? inputs[0].value : "");
+        bottomLines.push(inputs[1] ? inputs[1].value : "");
+      });
+      document.getElementById("top_text").value = joinLines(topLines);
+      document.getElementById("bottom_text").value = joinLines(bottomLines);
+
+      // require template thumbnail selected
+      if (!document.getElementById("template_input").value) {
+        e.preventDefault();
+        alert("Please select a template by clicking a thumbnail.");
+        return false;
+      }
+    });
+
+    // Clear button helper
+    const clearBtn = document.getElementById('clearBtn');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        if (confirm('Clear all text fields?')) {
+          document.getElementById('top_text').value = '';
+          document.getElementById('bottom_text').value = '';
+          buildPreviewRows();
+        }
+      });
+    }
+
+    // Keep preview and dark-mode state on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      // ensure checkbox reflects current body class
+      const isDark = localStorage.getItem('pptx_dark_mode') === null ? true : (localStorage.getItem('pptx_dark_mode') === '1');
+      if (checkbox) { checkbox.checked = isDark; checkbox.setAttribute('aria-checked', isDark ? 'true' : 'false'); }
+      document.body.classList.toggle('dark', isDark);
+      buildPreviewRows();
+    });
+  </script>
+</body>
+</html>

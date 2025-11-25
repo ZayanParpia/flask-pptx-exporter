@@ -1,0 +1,1181 @@
+// Full file: stats2.kt
+package com.example.obstrue.ui.statistics
+
+import android.app.AppOpsManager
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStats
+import android.app.usage.UsageStatsManager
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import kotlin.math.abs
+import androidx.compose.runtime.*
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.navigation.NavHostController
+import androidx.navigation.navOptions
+import androidx.navigation.compose.currentBackStackEntryAsState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.util.Calendar
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
+import java.lang.Exception
+import com.example.obstrue.utils.UsageUtils
+import com.example.obstrue.R
+import com.example.obstrue.PopupStats
+
+
+/**
+ * =========================================================================================
+ * ADVANCED SCREEN TIME TRACKING STRATEGY
+ * =========================================================================================
+ *
+ * This file implements a robust screen time tracking system using a combination of Android APIs.
+ *
+ * 1. UsageStatsManager (Historical Data):
+ *    - PERMISSION: Requires `PACKAGE_USAGE_STATS`, which the user must grant via system settings.
+ *    - MECHANISM: The `getScreenTimeForDay` function uses `UsageStatsManager.queryEvents`. This is a
+ *      powerful but complex API that provides a high-resolution timeline of user actions (app in
+ *      foreground/background, screen on/off, etc.).
+ *    - LOGIC: We reconstruct the user's session by processing these events chronologically. We build
+ *      two lists of time intervals:
+ *        a) When the screen was ON.
+ *        b) When any app was in the FOREGROUND.
+ *      True "screen time" is the intersection (overlap) of these two sets of intervals. An app being
+ *      in the foreground while the screen is off (e.g., a music player) does not count.
+ *    - LIMITATIONS: This method is excellent for historical data (e.g., yesterday's usage) but is
+ *      not real-time. The system batches and writes these events, so there can be a delay.
+ *
+ * 2. AccessibilityService (Real-Time Monitoring):
+ *    - PURPOSE: To supplement `UsageStatsManager` with instantaneous, real-time updates. This is crucial
+ *      for features like immediate app blocking or real-time usage counters.
+ *    - MECHANISM: An `AccessibilityService` can listen for `TYPE_WINDOW_STATE_CHANGED` events, which fire
+ *      immediately when the user switches apps.
+ *    - IMPLEMENTATION (Architectural Overview - Not in this file):
+ *        a) Create a class extending `AccessibilityService` (e.g., `RealtimeUsageMonitorService`).
+ *        b) Declare the service in `AndroidManifest.xml` with the required permissions and configuration.
+ *        c) The service would track the currently focused app and the time spent on it.
+ *        d) It would communicate this data back to the app, for example by:
+ *           - Broadcasting an `Intent` with the usage data.
+ *           - Writing to a shared `ContentProvider`.
+ *           - Storing data in a database that the UI observes.
+ *    - INTEGRATION: The UI (`ObstrueStatistics` composable) would listen for updates from this
+ *      service to update the "today" view in real-time, while still relying on `UsageStatsManager`
+ *      for historical data and for filling any gaps.
+ *
+ * This implementation focuses on the `UsageStatsManager` part, providing a highly accurate
+ * calculation for daily and weekly statistics. The real-time component is an architectural
+ * extension that would be built separately.
+ * =========================================================================================
+ */
+
+
+private fun hasUsageStatsPermission(context: Context): Boolean {
+    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.packageName)
+    } else {
+        appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.packageName)
+    }
+    return mode == AppOpsManager.MODE_ALLOWED
+}
+
+// --- Data Keys and Constants ---
+private const val PREFS_NAME = "obstrue_prefs"
+private const val TASKS_KEY = "todo_tasks"
+private const val GOALS_KEY = "todo_goals"
+private const val DATA_FILENAME = "obstrue_data.json"
+private const val BLOCKED_PREF_KEY = "blocked_apps"
+
+
+// -----------------------------------------------------------------------------
+// Local UI-only state-holder for blocked app + time (kept private to this file)
+// -----------------------------------------------------------------------------
+private class ObstrueAppStat(
+    val packageName: String,
+    val label: String,
+    val iconBitmap: ImageBitmap
+) {
+    var timeMs by mutableStateOf(0L)
+}
+
+// --- Data Loading Functions ---
+
+private data class StatsSummary(val tasksDone: Int, val totalTasks: Int, val goalsDone: Int)
+
+/**
+ * A simple data class to represent a time interval.
+ * Using a data class is cleaner and more readable than `Pair<Long, Long>`.
+ */
+private data class TimeInterval(val start: Long, val end: Long)
+
+
+/**
+ * Fetches a summary of tasks and goals from SharedPreferences in a single background operation.
+ * This is optimized to perform all SharedPreferences I/O and JSON parsing off the main thread.
+ */
+private suspend fun loadStatsSummaryFromPrefsIO(context: Context): StatsSummary = withContext(Dispatchers.IO) {
+    try {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        // Load and parse tasks
+        val savedTasks = prefs.getString(TASKS_KEY, null)
+        val (tasksDone, totalTasks) = if (savedTasks != null) {
+            val arr = JSONArray(savedTasks)
+            var done = 0
+            for (i in 0 until arr.length()) {
+                if (arr.optJSONObject(i)?.optBoolean("checked", false) == true) {
+                    done++
+                }
+            }
+            done to arr.length()
+        } else {
+            0 to 0
+        }
+
+        // Load and parse goals
+        val savedGoals = prefs.getString(GOALS_KEY, null)
+        val goalsDone = if (savedGoals != null) {
+            val arr = JSONArray(savedGoals)
+            var count = 0
+            for (i in 0 until arr.length()) {
+                if (arr.optJSONObject(i)?.optBoolean("checked", false) == true) {
+                    count++
+                }
+            }
+            count
+        } else {
+            0
+        }
+
+        StatsSummary(tasksDone, totalTasks, goalsDone)
+    } catch (e: Exception) {
+        StatsSummary(0, 0, 0)
+    }
+}
+
+/**
+ * Fetches the lessons for the current day from the JSON data file.
+ */
+private suspend fun loadTodayLessonsFromJSON(context: Context): List<String> = withContext(Dispatchers.IO) {
+    try {
+        val dataFile = File(context.filesDir, DATA_FILENAME)
+        if (!dataFile.exists()) return@withContext emptyList()
+
+        val txt = dataFile.readText()
+        if (txt.isBlank()) return@withContext emptyList()
+
+        val root = JSONObject(txt)
+        val lessonsObj = root.optJSONObject("lessons") ?: return@withContext emptyList()
+
+        val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val todayLessons = lessonsObj.optJSONArray(todayStr)
+
+        if (todayLessons != null) {
+            val lessons = mutableListOf<String>()
+            for (i in 0 until todayLessons.length()) {
+                lessons.add(todayLessons.getString(i))
+            }
+            return@withContext lessons
+        } else {
+            return@withContext emptyList()
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        return@withContext emptyList()
+    }
+}
+
+/**
+ * Fetches the number of reminder popups for the current day using PopupStats helper.
+ */
+private suspend fun loadReminderPopupsFromPrefsIO(context: Context): Int = withContext(Dispatchers.IO) {
+    try {
+        // Use shared PopupStats helper (defined in Popups) which uses a date-keyed SharedPreferences entry.
+        PopupStats.getTodayCount(context)
+    } catch (e: Exception) {
+        0
+    }
+}
+
+/**
+ * Reusable UI for a statistic card.
+ * Adjusted internal sizes to match the larger card height so text is clearly readable.
+ */
+@Composable
+private fun StatInfoCard(
+    modifier: Modifier = Modifier,
+    iconRes: Int,
+    title: String,
+    value: String
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF241827))
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(14.dp)
+                .fillMaxSize(), // card size controlled by caller
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Image(
+                painter = painterResource(id = iconRes),
+                contentDescription = title,
+                modifier = Modifier.size(52.dp), // larger icon for readability
+                contentScale = ContentScale.Fit
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = value,
+                fontSize = 28.sp, // larger numeric value
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            Text(
+                text = title,
+                fontSize = 14.sp, // readable label size under number
+                color = Color(0xFFBFAFC6),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+    }
+}
+
+/** Reusable bottom nav item from original file. */
+@Composable
+private fun BottomNavItemLocal(
+    resId: Int,
+    label: String,
+    iconSize: Dp,
+    iconBoxHeight: Dp,
+    modifier: Modifier = Modifier,
+    noRipple: MutableInteractionSource,
+    enabled: Boolean = true, // Added enabled parameter
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier.then(if (enabled) Modifier.clickable(interactionSource = noRipple, indication = null) { onClick() } else Modifier).padding(vertical = 6.dp)
+    ) {
+        Box(modifier = Modifier.height(iconBoxHeight).width(iconBoxHeight), contentAlignment = Alignment.Center) {
+            Image(painter = painterResource(id = resId), contentDescription = label, modifier = Modifier.size(iconSize), contentScale = ContentScale.Fit)
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(label, color = Color.White, fontSize = 11.sp) // Changed color to Color.White
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ObstrueStatistics(navController: NavHostController) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+
+    // responsive sizes
+    val titleSize = when {
+        configuration.screenWidthDp < 360 -> 36.sp
+        configuration.screenWidthDp < 420 -> 44.sp
+        configuration.screenWidthDp < 600 -> 52.sp
+        else -> 64.sp
+    }
+    val defaultIconSize = 35.dp
+    val bottomBarHeight = (configuration.screenHeightDp * 0.11f).coerceIn(72f, 120f).dp
+
+    // states
+    val appStats = remember { mutableStateListOf<ObstrueAppStat>() }
+    var tasksDone by remember { mutableStateOf(0) }
+    var totalTasks by remember { mutableStateOf(0) }
+    var hasUsagePermission by remember { mutableStateOf(false) }
+    var showUsagePermissionPrompt by remember { mutableStateOf(false) }
+    var weeklyTotalsMs by remember { mutableStateOf(List(7) { 0L }) }
+    var weeklyLoading by remember { mutableStateOf(false) }
+    val todayCalendar = Calendar.getInstance()
+    val initialSelected = (todayCalendar.get(Calendar.DAY_OF_WEEK) - Calendar.SUNDAY).coerceIn(0, 6)
+    var selectedDayIndex by remember { mutableStateOf(initialSelected) }
+    var lastFetchedDayOfYear by remember { mutableStateOf(Calendar.getInstance().get(Calendar.DAY_OF_YEAR)) }
+
+    // ADDED states for stats
+    var goalsDone by remember { mutableStateOf(0) }
+    var lessonsLearned by remember { mutableStateOf(0) }
+    var reminderPopUps by remember { mutableStateOf(0) }
+    var weekOffset by remember { mutableStateOf(0) }
+
+    // Track last lessons reset day and ensure we reset daily
+    var lastLessonsResetDay by remember { mutableStateOf(Calendar.getInstance().get(Calendar.DAY_OF_YEAR)) }
+
+    // helper to format ms -> friendly text
+    fun fmtTime(ms: Long): String {
+        if (ms <= 0L) return "0 min"
+        val totalMin = (ms / 60000L).toInt()
+        val mins = totalMin % 60
+        val hours = totalMin / 60
+        return if (hours > 0) "${hours} hrs ${mins} min" else "${mins} min"
+    }
+
+    // background helpers preserved...
+    suspend fun loadBlockedAppsFromPrefsIO(): List<ObstrueAppStat> = withContext(Dispatchers.IO) {
+        val out = mutableListOf<ObstrueAppStat>()
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val saved = prefs.getString(BLOCKED_PREF_KEY, null)
+            val pm = context.packageManager
+            if (!saved.isNullOrEmpty()) {
+                val arr = JSONArray(saved)
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val pkg = o.optString("package", "")
+                    val label = o.optString("label", pkg)
+                    val iconBitmap = try {
+                        val drawable = pm.getApplicationIcon(pkg)
+                        val bmp = when (drawable) {
+                            is android.graphics.drawable.BitmapDrawable -> drawable.bitmap
+                            else -> {
+                                val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 48
+                                val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 48
+                                val b = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                                val canvas = android.graphics.Canvas(b)
+                                drawable.setBounds(0, 0, canvas.width, canvas.height)
+                                drawable.draw(canvas)
+                                b
+                            }
+                        }
+                        bmp.asImageBitmap()
+                    } catch (_: Exception) {
+                        Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888).asImageBitmap()
+                    }
+                    out.add(ObstrueAppStat(pkg, label, iconBitmap))
+                }
+            }
+        } catch (_: Exception) { /* ignore */ }
+        out
+    }
+
+    /**
+     * Calculates the total device screen time for a specific day by analyzing usage events.
+     * This method is highly accurate because it calculates the overlap between "screen on" time
+     * and "app in foreground" time.
+     *
+     * @param context The application context.
+     * @param day A Calendar instance representing the target day.
+     * @return The total screen time in milliseconds.
+     */
+    suspend fun getScreenTimeForDay(context: Context, day: Calendar): Long = withContext(Dispatchers.IO) {
+        val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return@withContext 0L
+
+        // 1. Define the time window for the query (a single day).
+        val startOfDay = (day.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val startTime = startOfDay.timeInMillis
+
+        val today = Calendar.getInstance()
+        val isToday = day.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+                day.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR)
+
+        val endTime = if (isToday) System.currentTimeMillis() else (startOfDay.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, 1) }.timeInMillis
+
+        if (endTime <= startTime) return@withContext 0L
+
+        try {
+            // 2. Prepare lists to hold reconstructed time intervals.
+            val screenOnIntervals = mutableListOf<TimeInterval>()
+            val appForegroundIntervals = mutableListOf<TimeInterval>()
+
+            // 3. Keep track of the running state.
+            var screenOnTime = 0L
+            var isScreenOn = false
+            val appLastForeground = mutableMapOf<String, Long>()
+
+            // 4. Determine initial state before the main loop.
+            // Query a small window before the start time to see if the screen was already on or an app was already in the foreground.
+            val initialEvents = usm.queryEvents(startTime - 30000, startTime)
+            val tempEvent = UsageEvents.Event()
+            var lastScreenEvent: Int? = null
+            val lastAppEvents = mutableMapOf<String, Int>()
+
+            while (initialEvents.hasNextEvent()) {
+                initialEvents.getNextEvent(tempEvent)
+                if (tempEvent.timeStamp < startTime) {
+                    when (tempEvent.eventType) {
+                        UsageEvents.Event.SCREEN_INTERACTIVE, UsageEvents.Event.SCREEN_NON_INTERACTIVE -> lastScreenEvent = tempEvent.eventType
+                    }
+                    tempEvent.packageName?.let { lastAppEvents[it] = tempEvent.eventType }
+                }
+            }
+            if (lastScreenEvent == UsageEvents.Event.SCREEN_INTERACTIVE) {
+                isScreenOn = true
+                screenOnTime = startTime
+            }
+            for ((pkg, type) in lastAppEvents) {
+                if (type == UsageEvents.Event.MOVE_TO_FOREGROUND) {
+                    appLastForeground[pkg] = startTime
+                }
+            }
+
+
+            // 5. Main Event Processing Loop.
+            val usageEvents = usm.queryEvents(startTime, endTime)
+            val event = UsageEvents.Event()
+            while (usageEvents.hasNextEvent()) {
+                usageEvents.getNextEvent(event)
+                val eventTime = event.timeStamp
+                val pkg = event.packageName
+
+                when (event.eventType) {
+                    // Screen became active.
+                    UsageEvents.Event.SCREEN_INTERACTIVE -> {
+                        if (!isScreenOn) {
+                            isScreenOn = true
+                            screenOnTime = eventTime
+                        }
+                    }
+                    // Screen became inactive.
+                    UsageEvents.Event.SCREEN_NON_INTERACTIVE -> {
+                        if (isScreenOn) {
+                            isScreenOn = false
+                            if (eventTime > screenOnTime) {
+                                screenOnIntervals.add(TimeInterval(screenOnTime, eventTime))
+                            }
+                        }
+                    }
+                    // An app came to the foreground.
+                    UsageEvents.Event.MOVE_TO_FOREGROUND -> {
+                        if (pkg != null) {
+                            appLastForeground[pkg] = eventTime
+                        }
+                    }
+                    // An app went to the background.
+                    UsageEvents.Event.MOVE_TO_BACKGROUND -> {
+                        if (pkg != null) {
+                            val start = appLastForeground.remove(pkg)
+                            if (start != null && eventTime > start) {
+                                appForegroundIntervals.add(TimeInterval(start, eventTime))
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 6. Finalize any intervals that were still "open" at the end of the query window.
+            if (isScreenOn && endTime > screenOnTime) {
+                screenOnIntervals.add(TimeInterval(screenOnTime, endTime))
+            }
+            for ((_, start) in appLastForeground) {
+                if (endTime > start) {
+                    appForegroundIntervals.add(TimeInterval(start, endTime))
+                }
+            }
+
+            if (screenOnIntervals.isEmpty() || appForegroundIntervals.isEmpty()) return@withContext 0L
+
+            // 7. Calculate the total overlap between screen-on intervals and app-foreground intervals. This is the true screen time.
+            var totalScreenTime = 0L
+            for (appInterval in appForegroundIntervals) {
+                for (screenInterval in screenOnIntervals) {
+                    val overlapStart = max(appInterval.start, screenInterval.start)
+                    val overlapEnd = min(appInterval.end, screenInterval.end)
+                    val overlapDuration = overlapEnd - overlapStart
+                    if (overlapDuration > 0) {
+                        totalScreenTime += overlapDuration
+                    }
+                }
+            }
+            return@withContext totalScreenTime
+        } catch (e: Exception) {
+            // If any error occurs, return 0 to avoid incorrect data.
+            e.printStackTrace()
+            return@withContext 0L
+        }
+    }
+
+    suspend fun fetchWeeklyTotalsIO(offset: Int): List<Long> = withContext(Dispatchers.IO) {
+        val results = MutableList(7) { 0L }
+        try {
+            val startOfWeek = Calendar.getInstance().apply {
+                timeInMillis = System.currentTimeMillis()
+                add(Calendar.WEEK_OF_YEAR, offset)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+            }
+
+            val jobs = (0..6).map { i ->
+                async {
+                    val day = (startOfWeek.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, i) }
+                    getScreenTimeForDay(context, day)
+                }
+            }
+            jobs.forEachIndexed { index, job ->
+                results[index] = job.await()
+            }
+        } catch (_: Exception) {}
+        results.toList()
+    }
+
+    /**
+     * Fallback method to get app usage. It uses `queryUsageStats`, which aggregates data
+     * and can sometimes be less precise than event-based calculation, but is a reliable backup.
+     */
+    suspend fun fetchPerAppTotalsFallback(context: Context, pkgs: List<String>, start: Long, endExclusive: Long): Map<String, Long> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                if (usm == null) return@withContext pkgs.associateWith { 0L }
+
+                val usageList: List<UsageStats> = try {
+                    usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, endExclusive) ?: emptyList()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+
+                val result = mutableMapOf<String, Long>()
+                pkgs.forEach { result[it] = 0L }
+
+                for (us in usageList) {
+                    try {
+                        val pkg = us.packageName ?: continue
+                        val time = try {
+                            val t = us.totalTimeInForeground
+                            if (t > 0L) t else 0L
+                        } catch (_: Throwable) { 0L }
+                        if (time > 0L) result[pkg] = (result[pkg] ?: 0L) + time
+                    } catch (_: Exception) { /* ignore single record errors */ }
+                }
+                result
+            } catch (_: Exception) {
+                pkgs.associateWith { 0L }
+            }
+        }
+    }
+
+    suspend fun fetchUsageTimesForTodayIO(appList: List<ObstrueAppStat>) {
+        if (appList.isEmpty()) return
+        if (!hasUsagePermission) {
+            withContext(Dispatchers.Main) { appList.forEach { it.timeMs = 0L } }
+            return
+        }
+
+        val cal = Calendar.getInstance()
+        val endExclusive = System.currentTimeMillis()
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val start = cal.timeInMillis
+
+        val pkgs = appList.map { it.packageName }
+
+        var totals: Map<String, Long> = try {
+            withContext(Dispatchers.IO) {
+                try {
+                    UsageUtils.fetchPerAppTotalsForWindow(context, pkgs, start, endExclusive)
+                } catch (_: Exception) { emptyMap() }
+            }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+
+        val sumTotals = totals.values.fold(0L) { acc, v -> acc + v }
+        if (totals.isEmpty() || sumTotals == 0L) {
+            val fallback = fetchPerAppTotalsFallback(context, pkgs, start, endExclusive)
+            if (fallback.isNotEmpty()) totals = fallback
+        }
+
+        withContext(Dispatchers.Main) {
+            appList.forEach { stat ->
+                stat.timeMs = totals[stat.packageName] ?: 0L
+            }
+        }
+    }
+
+
+    fun openUsageAccessSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (t: Throwable) {
+            Toast.makeText(context, "Unable to open Usage Access settings", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun checkUsagePermission(): Boolean {
+        val ok = hasUsageStatsPermission(context)
+        hasUsagePermission = ok
+        if (!hasUsagePermission) showUsagePermissionPrompt = true
+        return ok
+    }
+
+    // Lifecycle and data refresh logic
+    DisposableEffect(lifecycleOwner) {
+        val observer = object : DefaultLifecycleObserver {
+            override fun onResume(owner: LifecycleOwner) {
+                scope.launch {
+                    val today = Calendar.getInstance().get(Calendar.DAY_OF_YEAR)
+                    if (today != lastFetchedDayOfYear) {
+                        lastFetchedDayOfYear = today
+                        appStats.forEach { it.timeMs = 0L }
+                    }
+
+                    // DAILY RESET: reset lessonsLearned on resume if day changed
+                    if (today != lastLessonsResetDay) {
+                        lastLessonsResetDay = today
+                        lessonsLearned = 0
+                    }
+
+                    // --- Optimized Data Loading ---
+                    val loadedAppsJob = async { loadBlockedAppsFromPrefsIO() }
+                    val summaryJob = async { loadStatsSummaryFromPrefsIO(context) }
+                    val lessonsJob = async { loadTodayLessonsFromJSON(context) }
+                    val popupsJob = async { loadReminderPopupsFromPrefsIO(context) }
+
+                    val loaded = loadedAppsJob.await()
+                    appStats.clear()
+                    appStats.addAll(loaded)
+
+                    val summary = summaryJob.await()
+                    tasksDone = summary.tasksDone
+                    totalTasks = summary.totalTasks
+                    goalsDone = summary.goalsDone
+
+                    // populate today's lessons count (0 if none)
+                    lessonsLearned = lessonsJob.await().size
+                    reminderPopUps = popupsJob.await()
+
+                    val ok = checkUsagePermission()
+                    if (ok) {
+                        scope.launch { weeklyLoading = true; weeklyTotalsMs = fetchWeeklyTotalsIO(weekOffset); weeklyLoading = false }
+                        scope.launch { fetchUsageTimesForTodayIO(appStats.toList()) }
+                    } else {
+                        showUsagePermissionPrompt = true
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // midnight refresh loop so lessonsLearned resets/refreshes if app stays open over midnight
+    LaunchedEffect(Unit) {
+        while (true) {
+            val now = Calendar.getInstance()
+            val next = Calendar.getInstance().apply {
+                add(Calendar.DAY_OF_YEAR, 1)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val delayMs = next.timeInMillis - now.timeInMillis
+            if (delayMs > 0) {
+                delay(delayMs + 1000L)
+            } else {
+                delay(60_000L)
+            }
+
+            try {
+                val todaysLessons = loadTodayLessonsFromJSON(context)
+                lessonsLearned = todaysLessons.size
+                reminderPopUps = loadReminderPopupsFromPrefsIO(context)
+            } catch (_: Exception) {
+                lessonsLearned = 0
+                reminderPopUps = 0
+            }
+            lastLessonsResetDay = Calendar.getInstance().get(Calendar.DAY_OF_YEAR)
+        }
+    }
+
+    val maxWeekOffset by remember {
+        derivedStateOf {
+            val installTime = try {
+                context.packageManager.getPackageInfo(context.packageName, 0).firstInstallTime
+            } catch (e: Exception) {
+                System.currentTimeMillis()
+            }
+            val installCal = Calendar.getInstance().apply { timeInMillis = installTime }
+            val currentCal = Calendar.getInstance()
+            installCal.set(Calendar.DAY_OF_WEEK, installCal.firstDayOfWeek)
+            currentCal.set(Calendar.DAY_OF_WEEK, currentCal.firstDayOfWeek)
+
+            val diff = currentCal.timeInMillis - installCal.timeInMillis
+            (diff / (7 * 24 * 60 * 60 * 1000)).toInt()
+        }
+    }
+
+    LaunchedEffect(weekOffset) {
+        if (hasUsagePermission) {
+            weeklyLoading = true
+            weeklyTotalsMs = fetchWeeklyTotalsIO(weekOffset)
+            weeklyLoading = false
+        }
+    }
+
+    val sortedAppStats by remember { derivedStateOf { appStats.sortedWith(compareByDescending<ObstrueAppStat> { it.timeMs }.thenBy { it.label }) } }
+    val totalBlockedTimeMs by remember { derivedStateOf { appStats.fold(0L) { acc, s -> acc + s.timeMs } } }
+
+    // Chart tweaks requested: keep same chartHeight and wider bars from last change
+    val chartHeight = 320.dp
+    val barWidthDp = 40.dp
+    val barSpacing = 8.dp
+    val leftLabelWidth = 44.dp
+
+    val displayMaxHours: Double = run {
+        val maxMs = (weeklyTotalsMs.maxOrNull() ?: 0L)
+        val maxHours = (maxMs / 3600000.0)
+        val rounded = ceil((if (maxHours > 0) maxHours else 5.0) / 5.0) * 5.0
+        if (rounded <= 0.0) 5.0 else rounded
+    }
+    val displayMaxMs = (displayMaxHours * 3600000.0).toLong()
+    val parentScrollState = rememberScrollState()
+    val fractions = weeklyTotalsMs.map { if (displayMaxMs > 0) (it.toFloat() / displayMaxMs.toFloat()).coerceIn(0f, 1f) else 0f }
+    val animFractions = fractions.map { f -> animateFloatAsState(targetValue = f, label = "bar_fraction_animation") }
+
+    // --- UI ---
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0B0710))
+    ) {
+        val h = configuration.screenHeightDp.toFloat()
+        val w = configuration.screenWidthDp.toFloat()
+        val topSpacing = (h * 0.04f).coerceIn(16f, 80f).dp
+        val horizontalPadding = (w * 0.05f).coerceIn(8f, 20f).dp
+        val bottomPadding = (h * 0.12f).coerceIn(90f, 180f).dp
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(parentScrollState)
+                .padding(bottom = bottomPadding),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(topSpacing))
+
+            // Title
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = horizontalPadding),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Statistics",
+                    color = Color(0xFFEFE7F6),
+                    fontSize = titleSize,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // Weekly chart section
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = horizontalPadding)
+            ) {
+                Text(
+                    "Weekly Screen Time",
+                    color = Color(0xFFE7F6),
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val selCalTop = Calendar.getInstance().apply {
+                    val s = Calendar.getInstance().apply {
+                        timeInMillis = System.currentTimeMillis()
+                        add(Calendar.WEEK_OF_YEAR, weekOffset)
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                        set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+                    }
+                    timeInMillis = s.timeInMillis + selectedDayIndex * 24L * 60L * 60L * 1000L
+                }
+                val selTopLabel = android.text.format.DateFormat.format("EEE MMM d", selCalTop.time).toString()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    IconButton(onClick = { weekOffset-- }, enabled = weekOffset > -maxWeekOffset) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Previous Week", tint = if (weekOffset > -maxWeekOffset) Color.White else Color.Gray)
+                    }
+                    Text(selTopLabel, color = Color(0xFFDAD0E6), fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp), textAlign = TextAlign.Center)
+                    IconButton(onClick = { if (weekOffset < 0) weekOffset++ }, enabled = weekOffset < 0) {
+                        Icon(Icons.Default.ArrowForward, contentDescription = "Next Week", tint = if (weekOffset < 0) Color.White else Color.Gray)
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val weeklyAverage = weeklyTotalsMs.average()
+                val selectedDayTime = weeklyTotalsMs.getOrNull(selectedDayIndex) ?: 0L
+                val percentageDiff = if (weeklyAverage > 0) ((selectedDayTime - weeklyAverage) / weeklyAverage * 100).toInt() else 0
+                val nonZeroDays = weeklyTotalsMs.count { it > 0 }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Weekly Average", color = Color(0xFFBFAFC6), fontSize = 12.sp)
+                        if (nonZeroDays < 2) {
+                            Text("N/A", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        } else {
+                            Text(fmtTime(weeklyAverage.toLong()), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Screen Time", color = Color(0xFFBFAFC6), fontSize = 12.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(fmtTime(selectedDayTime), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            if (nonZeroDays >= 2 && percentageDiff != 0) {
+                                val (arrow, color) = if (percentageDiff > 0) {
+                                    Icons.Default.ArrowUpward to Color.Red
+                                } else {
+                                    Icons.Default.ArrowDownward to Color.Green
+                                }
+                                Icon(
+                                    imageVector = arrow,
+                                    contentDescription = if (percentageDiff > 0) "Up" else "Down",
+                                    tint = color,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "${abs(percentageDiff)}%",
+                                    color = color,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val leftLabelWidthPx = with(density) { leftLabelWidth.toPx() }
+                val bottomLabelHeight = 100.dp
+
+                Box(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val wPx = size.width
+                        val hPx = size.height
+                        val startX = leftLabelWidthPx
+                        val stepHours = 5.0
+                        val tickCount = (displayMaxHours / stepHours).toInt().coerceAtLeast(1) + 1
+                        val gridColor = Color(0x33FFFFFF)
+
+                        for (i in 0 until tickCount) {
+                            val frac = if (tickCount - 1 == 0) 0f else i.toFloat() / (tickCount - 1).toFloat()
+                            val y = hPx - frac * hPx
+                            drawLine(color = gridColor, start = Offset(startX, y), end = Offset(wPx, y), strokeWidth = 1f)
+                        }
+
+                        drawIntoCanvas { canvas ->
+                            val paint = android.graphics.Paint().apply {
+                                isAntiAlias = true
+                                color = android.graphics.Color.argb(210, 196, 186, 206)
+                                textSize = with(density) { 12.sp.toPx() }
+                            }
+                            val steps = (displayMaxHours / stepHours).toInt().coerceAtLeast(1)
+                            for (i in 0..steps) {
+                                val frac = if (steps == 0) 0f else i.toFloat() / steps.toFloat()
+                                val y = hPx - frac * hPx
+                                val hours = (i * stepHours).toInt()
+                                canvas.nativeCanvas.drawText(hours.toString(), 6f, y - 4f, paint)
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(chartHeight)
+                            .padding(start = leftLabelWidth),
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        val labels = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+                        for (i in 0 until 7) {
+                            val frac = animFractions[i].value
+                            val maxBarHeight = chartHeight - bottomLabelHeight
+                            val barHeight = maxBarHeight * frac
+                            Column(
+                                modifier = Modifier
+                                    .width(barWidthDp)
+                                    .clickable { selectedDayIndex = i }
+                                    .padding(horizontal = barSpacing / 2),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Bottom
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .height(barHeight)
+                                        .width(barWidthDp)
+                                        .clip(MaterialTheme.shapes.small)
+                                        .background(
+                                            if (i == selectedDayIndex)
+                                                Brush.verticalGradient(listOf(Color(0xFFFFD54F), Color(0xFFFFEB3B)))
+                                            else
+                                                Brush.verticalGradient(listOf(Color(0xFF7B61FF), Color(0xFFFF69B4)))
+                                        )
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    labels[i],
+                                    color = if (i == selectedDayIndex) Color(0xFFFFE6A8) else Color(0xFFB6A9C1),
+                                    fontSize = 11.sp,
+                                    fontWeight = if (i == selectedDayIndex) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("You need to wait 7 days to see full data.", color = Color(0xFFA9B0C2), fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            }
+
+            // -----------------------
+            // Stat boxes: made larger so label & value are clearly readable
+            // -----------------------
+            Spacer(modifier = Modifier.height(18.dp))
+
+            val statBoxHeight = 160.dp   // increased to make numbers/labels clearly readable
+            val statBoxSpacing = 16.dp
+
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalPadding)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(statBoxSpacing)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(statBoxSpacing)
+                    ) {
+                        StatInfoCard(
+                            iconRes = R.drawable.goals,
+                            title = "Goals Done",
+                            value = goalsDone.toString(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(statBoxHeight)
+                        )
+                        StatInfoCard(
+                            iconRes = R.drawable.lessons,
+                            title = "Lessons Learned",
+                            value = lessonsLearned.toString(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(statBoxHeight)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(statBoxSpacing)
+                    ) {
+                        StatInfoCard(
+                            iconRes = R.drawable.bell,
+                            title = "Reminder Pop Ups",
+                            value = reminderPopUps.toString(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(statBoxHeight)
+                        )
+                        StatInfoCard(
+                            iconRes = R.drawable.tasksup,
+                            title = "Tasks Done",
+                            value = "$tasksDone/${if (totalTasks > 0) totalTasks else 0}",
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(statBoxHeight)
+                        )
+                    }
+                }
+            }
+
+            // Banner ad placeholder
+            val bannerHeight = 56.dp
+            Spacer(modifier = Modifier.height(12.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(bannerHeight)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF111111)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Banner Ad", color = Color(0xFF8F8F8F), fontSize = 14.sp)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Total Time Wasted (directly after banner area)
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalPadding), verticalAlignment = Alignment.CenterVertically) {
+                Text("Total Time Wasted:", color = Color(0xFFEFE7F6), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(fmtTime(totalBlockedTimeMs), color = Color(0xFFFFD880), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.weight(1f))
+                Text("${appStats.size} items", color = Color(0xFFBFAFC6), fontSize = 13.sp)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalPadding)) {
+                if (sortedAppStats.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxWidth().height(88.dp), contentAlignment = Alignment.Center) {
+                        Text("No blocked apps to show", color = Color(0xFF8F8F8F))
+                    }
+                } else {
+                    val itemHeight = 66.dp
+                    val itemSpacing = 12.dp
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(itemSpacing)
+                    ) {
+                        sortedAppStats.forEach { stat ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().height(itemHeight)
+                            ) {
+                                Image(bitmap = stat.iconBitmap, contentDescription = stat.label, modifier = Modifier.size(48.dp).clip(MaterialTheme.shapes.small), contentScale = ContentScale.Fit)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(stat.label, color = Color(0xFFEFE7F6), fontSize = 16.sp, modifier = Modifier.weight(1f))
+                                Text(fmtTime(stat.timeMs), color = Color(0xFFEFE7F6), fontSize = 14.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(36.dp))
+        }
+
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Divider(color = Color(0x557B61FF), thickness = 1.dp)
+                Image(
+                    painter = painterResource(id = R.drawable.hiddenlayer),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(bottomBarHeight + 25.dp),
+                    contentScale = ContentScale.FillBounds
+                )
+            }
+
+            val navIconBoxHeight = 35.dp
+            val navNoRipple = remember { MutableInteractionSource() }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(bottom = 12.dp, start = 8.dp, end = 8.dp)
+                    .align(Alignment.BottomCenter),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BottomNavItemLocal(R.drawable.houseotlined, "Home", iconSize = navIconBoxHeight, iconBoxHeight = navIconBoxHeight, modifier = Modifier.weight(1f), noRipple = navNoRipple, enabled = currentRoute != "main") {
+                    if (currentRoute != "main") navController.navigate("main", navOptions { anim { enter = 0; exit = 0; popEnter = 0; popExit = 0 }; launchSingleTop = true })
+                }
+                BottomNavItemLocal(R.drawable.unselectedmsgbutton, "Pop-Ups", iconSize = navIconBoxHeight, iconBoxHeight = navIconBoxHeight, modifier = Modifier.weight(1f), noRipple = navNoRipple, enabled = currentRoute != "msg_voices") {
+                    if (currentRoute != "msg_voices") navController.navigate("msg_voices", navOptions { anim { enter = 0; exit = 0; popEnter = 0; popExit = 0 }; launchSingleTop = true })
+                }
+                BottomNavItemLocal(R.drawable.stats, "Statistics", iconSize = navIconBoxHeight, iconBoxHeight = navIconBoxHeight, modifier = Modifier.weight(1f), noRipple = navNoRipple, enabled = currentRoute != "statistics") {
+                    // No-op, already on this screen
+                }
+                BottomNavItemLocal(R.drawable.todolist, "Productivity", iconSize = 48.dp, iconBoxHeight = navIconBoxHeight, modifier = Modifier.weight(1f), noRipple = navNoRipple, enabled = currentRoute != "todo") {
+                    if (currentRoute != "todo") navController.navigate("todo", navOptions { anim { enter = 0; exit = 0; popEnter = 0; popExit = 0 }; launchSingleTop = true })
+                }
+            }
+        }
+
+        if (showUsagePermissionPrompt) {
+            AlertDialog(
+                onDismissRequest = { showUsagePermissionPrompt = false },
+                title = { Text("Enable Usage Access") },
+                text = { Text("Obstrue needs Usage Access to read app screen time so we can show accurate statistics. Open Settings to grant permission?") },
+                confirmButton = { TextButton(onClick = { showUsagePermissionPrompt = false; openUsageAccessSettings() }) { Text("Open settings") } },
+                dismissButton = { TextButton(onClick = { showUsagePermissionPrompt = false }) { Text("Dismiss") } }
+            )
+        }
+    }
+}

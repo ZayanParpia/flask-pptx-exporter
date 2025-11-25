@@ -1,0 +1,14 @@
+Marsiya
+
+Top should be English text, #ffc000 and font Open Sans and bold and font size 54 
+Bottom should be bottom text, White, Font open sans, bold and font size 40
+
+Qasida
+
+Top should be English text, Bold, font size 54, Arial and color should be #e4c0a8
+Bottom should be Bottom text, Calibri, font size 44, Bold and color white 
+
+Quran
+
+Top should be second text, Open sans, font 54, bold and color #434d64
+Bottom should be first text (English), Georgia, bold, font size 44 and color #434d64 

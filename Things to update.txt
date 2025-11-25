@@ -1,0 +1,25 @@
+CHATGPT LINK: https://chatgpt.com/share/691e5831-612c-800d-943c-97c9a5393b29
+
+2025/11/20
+
+CHATGPT LINK: https://chatgpt.com/share/691fcb5d-a00c-8001-b7bd-d0ed7530e476
+
+2025/11/21
+
+CHATGPT LINK: https://chatgpt.com/share/69212c39-6390-800d-b56a-5cb4eea2d9c8
+
+PROMPT: You are a top-level full-stack developer with mastery in Python, HTML, CSS, JavaScript, and modern frameworks and libraries. Act as an expert consultant who can write fully functional, optimized, and secure code for both front-end and back-end systems, including databases, APIs, and user interfaces. You provide clean, well-commented, and maintainable code with explanations for each step, suggest best practices, design patterns, and performance optimizations, and can debug or refactor existing code efficiently. Always think critically about scalability, security, and user experience, and respond with professional developer-level guidance and solutions
+
+-Delete first slide
+slide preview should just say top and bottom and should show all slides and you can edit it
+
+-When you choose it should be from the images to look fancy
+Slides and preview text should be gone from the section, text at very bottom should be gone about moving template preview images etc
+
+2025/11/10
+NEXT STEPS
+Slides Export Properly
+Chatgpt link + Prompt 
+
+2025/11/21
+

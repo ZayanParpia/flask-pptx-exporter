@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Tutorial — PPTX Exporter</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+  <style>
+    /* Dark theme variables (match main page feel) */
+    :root{
+      --bg-1: #0b1220;
+      --bg-2: #07101a;
+      --card-1: #0f1724;
+      --muted: #9aa6c3;
+      --accent: #0b63ff;
+      --accent-2: #7c9cff;
+      --glass: rgba(255,255,255,0.04);
+      --radius: 12px;
+      --pad: 18px;
+      --shadow-dark: 0 10px 30px rgba(2,6,23,0.65);
+      --trans: 180ms cubic-bezier(.2,.9,.3,1);
+      --text: #e6eefc;
+    }
+
+    html,body { height:100%; margin:0; font-family:Inter, "Segoe UI", Roboto, Arial, sans-serif; background: linear-gradient(180deg,var(--bg-1),var(--bg-2)); color:var(--text); -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+    a { color: #9fc0ff; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+
+    .container { max-width: 980px; margin: 28px auto; padding: 20px; }
+    .card {
+      background: linear-gradient(180deg,var(--card-1),var(--bg-1));
+      border-radius: calc(var(--radius) + 4px);
+      padding: var(--pad);
+      box-shadow: var(--shadow-dark);
+      border: 1px solid var(--glass);
+    }
+
+    /* Top row: back on left, title, no copy buttons */
+    .top-row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    .left-block { display:flex; align-items:center; gap:12px; }
+    .back-btn {
+      display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px; background: transparent; color:#cfe3ff; font-weight:700; cursor:pointer; text-decoration:none; border:1px solid rgba(255,255,255,0.03);
+    }
+    .title { display:flex; flex-direction:column; gap:4px; }
+    .title h1 { margin:0; font-size:20px; color:var(--text); }
+    .title p { margin:0; color:var(--muted); font-size:13px; }
+
+    .grid { display:grid; grid-template-columns: 1fr 380px; gap:18px; margin-top:14px; align-items:start; }
+    @media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
+
+    .prompt-card {
+      background: linear-gradient(180deg,#0d1320,#0b1220);
+      border-radius:12px; padding:18px; border:1px solid rgba(255,255,255,0.03);
+      display:flex; flex-direction:column; gap:12px;
+    }
+    .prompt-label { color:var(--muted); font-weight:700; font-size:13px; }
+    .prompt-square {
+      width:100%;
+      aspect-ratio: 1 / 1;
+      min-height:220px;
+      display:flex; align-items:center; justify-content:center;
+      border-radius:12px;
+      background: linear-gradient(180deg,#07101a,#081220);
+      border: 1px dashed rgba(255,255,255,0.04);
+      color: var(--text);
+      font-weight:800;
+      font-size:18px;
+      text-align:center;
+      padding:18px;
+      user-select: text;
+      cursor: pointer;
+      transition: transform var(--trans), box-shadow var(--trans), border-color var(--trans);
+    }
+
+    .prompt-square:focus { outline:none; box-shadow: 0 14px 40px rgba(11,99,255,0.12); transform: translateY(-3px); border-color: rgba(11,99,255,0.20); }
+    .copy-hint { color:var(--muted); font-size:13px; }
+
+    .right-column { display:flex; flex-direction:column; gap:12px; }
+
+    .link-card {
+      padding:12px; border-radius:10px; background: linear-gradient(180deg,#0d1320,#0b1220); border:1px solid rgba(255,255,255,0.03);
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+    }
+    .meta { color:var(--muted); font-size:13px; }
+
+    /* ChatGPT blue button */
+    .chatgpt-link {
+      display:inline-flex; align-items:center; gap:10px; padding:10px 14px; border-radius:8px;
+      background: linear-gradient(180deg,#072e9f,#0b63ff);
+      color:white; font-weight:800; text-decoration:none; box-shadow: 0 8px 22px rgba(11,99,255,0.12);
+    }
+    .chatgpt-link:hover { transform: translateY(-2px); }
+
+    /* video */
+    .video-wrap { border-radius: 10px; overflow: hidden; border:1px solid rgba(255,255,255,0.03); }
+    video { width:100%; height:auto; display:block; background: #000; }
+
+    /* small help text */
+    .note { color:var(--muted); font-size:13px; }
+
+    /* toast notification */
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      background: rgba(11,99,255,0.12);
+      color: var(--accent);
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-weight:700;
+      box-shadow: 0 8px 30px rgba(2,6,23,0.6);
+      transform: translateY(8px);
+      opacity: 0;
+      transition: opacity 220ms ease, transform 220ms ease;
+      z-index: 99999;
+      pointer-events: none;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card" role="main" aria-labelledby="tutorial-title">
+      <div class="top-row">
+        <div class="left-block">
+          <!-- Back button to the left of title -->
+          <a href="/" class="back-btn" title="Back to exporter">← Back</a>
+
+          <div class="title">
+            <h1 id="tutorial-title">Tutorial & Prompt</h1>
+            <p>Quick actions and resources for exporting PPTX files</p>
+          </div>
+        </div>
+
+        <!-- intentionally empty right side of top-row (no copy/paste buttons) -->
+        <div style="width:1px; height:1px; opacity:0;"></div>
+      </div>
+
+      <div class="grid" role="region" aria-label="Tutorial content">
+        <!-- LEFT: prompt display (not editable, clickable to copy) -->
+        <section class="prompt-card" aria-labelledby="prompt-heading">
+          <div>
+            <div id="prompt-heading" class="prompt-label">Pre-written prompt</div>
+            <div class="copy-hint">Click the square to copy the prompt, a notification will appear.</div>
+          </div>
+
+          <!-- read-only prompt square (focusable) -->
+          <div id="promptSquare" class="prompt-square" role="button" tabindex="0" aria-pressed="false" aria-label="Copy prompt to clipboard">
+            <span id="promptText">I will give you a marsyia script, your job is to seperate the English and Urdu Phrase one after another in two sections, English and Urdu, and put the phrases under eachother in terms of translation, for example
+
+ENGLISH
+English phrase 1
+English phrase 2
+English phrase 3
+
+URDU
+Urdu Phrase 1
+Urdu Phrase 2
+Urdu Phrase 3
+
+English phrase 1 is the translation of Urdu phrase 1, English Phrase 2 is the translation of Urdu Phrase 2 and so on.
+
+If there are 
+
+If there are any things like (x2) or any other things that are not meant to be displayed should not be included.
+
+Make sure that the Urdu translation is corresponding with the English phrase
+
+Make sure that the urdu phrases are not in urdu letters but the way I gave it to you with no changes
+
+there should be no gap between the phrases when you give them
+
+Do this in the order of the script
+
+Reply with Ready if you understood</span>
+          </div>
+
+          <div class="note"></div>
+        </section>
+
+        <!-- RIGHT: video and ChatGPT link above it -->
+        <aside class="right-column" aria-labelledby="resources-heading">
+          <div class="link-card" style="flex-direction:column; align-items:flex-start;">
+            <div style="display:flex;flex-direction:column; gap:6px;">
+              <div id="resources-heading" style="font-weight:800;color:var(--text)">Video Tutorial</div>
+              <div class="meta">Play / pause / seek — stored under <code>/static/tut.mp4</code></div>
+            </div>
+
+            <!-- ChatGPT link (blue button) above video -->
+            <a class="chatgpt-link" href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">https://chatgpt.com/ ↗</a>
+          </div>
+
+          <div class="video-wrap" aria-hidden="false">
+            <video id="tutVideo" controls preload="metadata" playsinline muted>
+              <source src="{{ url_for('static', filename='tut.mp4') }}" type="video/mp4">
+              Your browser does not support HTML5 video.
+            </video>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <!-- toast -->
+  <div id="toast" class="toast" role="status" aria-live="polite">Prompt copied</div>
+
+  <script>
+    (function () {
+      const promptSquare = document.getElementById('promptSquare');
+      const toast = document.getElementById('toast');
+      const promptText = document.getElementById('promptText');
+
+      function showToast(msg = 'Prompt copied', ms = 1400) {
+        toast.textContent = msg;
+        toast.classList.add('show');
+        clearTimeout(toast._hideTimer);
+        toast._hideTimer = setTimeout(() => {
+          toast.classList.remove('show');
+        }, ms);
+      }
+
+      function getPromptText() {
+        // grab text content; keep internal whitespace compact
+        return (promptText.textContent || '').trim();
+      }
+
+      async function copyTextToClipboard(text) {
+        try {
+          if (!text) {
+            showToast('Prompt is empty', 1400);
+            return;
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            // fallback
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-99999px';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+          }
+          showToast('Prompt copied', 1400);
+        } catch (err) {
+          // if copy fails, show a native alert as fallback
+          try {
+            alert('Prompt copied to clipboard'); // still attempt to notify
+          } catch (e) {
+            console.warn('Unable to show alert', e);
+          }
+        }
+      }
+
+      // Click handler
+      promptSquare.addEventListener('click', () => {
+        const text = getPromptText();
+        copyTextToClipboard(text);
+      });
+
+      // Keyboard support (Enter / Space)
+      promptSquare.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          const text = getPromptText();
+          copyTextToClipboard(text);
+        }
+      });
+
+      // Make sure it's focusable on page load for keyboard users if desired
+      // (no auto-focus to avoid UX surprise)
+    })();
+  </script>
+</body>
+</html>
