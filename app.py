@@ -27,8 +27,9 @@ from pptx.enum.text import PP_ALIGN
 from werkzeug.utils import secure_filename
 
 # configure paths - adjust to your environment
-TEMPLATES_FOLDER = r"C:\Users\ikepa\OneDrive\Pictures\JCC\templates"
-STATIC_FOLDER = r"C:\Users\ikepa\OneDrive\Pictures\JCC\static"
+TEMPLATES_FOLDER = "templates"
+STATIC_FOLDER = "static"
+
 
 app = Flask(__name__, template_folder=TEMPLATES_FOLDER, static_folder=STATIC_FOLDER)
 @app.route("/tutorial", methods=["GET"])
