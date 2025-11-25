@@ -1,3 +1,3 @@
 Flask==2.3.2
 python-pptx==0.6.22
-gunicorn
+gunicorn==21.2.0
